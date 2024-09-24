@@ -1,0 +1,181 @@
+version: '3.9'
+services:
+  redis_db:
+    extends:
+      file: ./docker-compose/services/redis.yml
+      service: redis_db
+
+  db-init:
+    extends:
+      file: ./docker-compose/services/db.yml
+      service: db-init
+
+  db:
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./docker-compose/services/db.yml
+      service: db
+
+  backend:
+    depends_on:
+      - db
+      - redis_db
+    extends:
+      file: ./docker-compose/services/backend.yml
+      service: backend
+    links:
+      - db:database
+    environment:
+        ETHEREUM_JSONRPC_HTTP_URL: http://nitro:8449/
+        ETHEREUM_JSONRPC_TRACE_URL: http://nitro:8449/
+        INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: "true"
+
+  visualizer:
+    extends:
+      file: ./docker-compose/services/visualizer.yml
+      service: visualizer
+
+  sig-provider:
+    extends:
+      file: ./docker-compose/services/sig-provider.yml
+      service: sig-provider
+
+  frontend:
+    depends_on:
+      - backend
+    extends:
+      file: ./docker-compose/services/frontend.yml
+      service: frontend
+    environment:
+      NEXT_PUBLIC_NETWORK_NAME: "Arbitrum Local"
+      NEXT_PUBLIC_NETWORK_SHORT_NAME: "Arbitrum Local"
+      NEXT_PUBLIC_AD_BANNER_PROVIDER: "none"
+      NEXT_PUBLIC_NETWORK_RPC_URL: http://nitro:8449/
+
+
+  stats-db-init:
+    extends:
+      file: ./docker-compose/services/stats.yml
+      service: stats-db-init
+
+  stats-db:
+    depends_on:
+      stats-db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./docker-compose/services/stats.yml
+      service: stats-db
+
+  stats:
+    depends_on:
+      - stats-db
+      - backend
+    extends:
+      file: ./docker-compose/services/stats.yml
+      service: stats
+
+  proxy:
+    depends_on:
+      - backend
+      - frontend
+      - stats
+    extends:
+      file: ./docker-compose/services/nginx.yml
+      service: proxy
+
+  nitro:
+    image: nitro:release
+    ports:
+      - "8449:8449"
+    volumes:
+      - "./config:/home/user/.arbitrum"
+    command: --conf.file /home/user/.arbitrum/nodeConfig.json 
+    user: root
+
+  das-server:
+    image: nitro:release
+    entrypoint: [ "/bin/bash", "/das-server.sh" ]
+    volumes:
+      - "./config:/home/user/.arbitrum"
+      - "./das-server.sh:/das-server.sh"
+      - "./das-data:/home/user/das-data"
+    ports:
+      - "9876:9876"
+      - "9877:9877"
+  
+  gateway-store:
+    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:v0.7.1
+    command:
+      - "kv_store"
+    ports:
+      - "8088:8088"
+
+  kms-validator:
+    image: ghcr.io/zama-ai/kms-blockchain-asc-dev:v0.7.1
+    ports:
+      - "36656:26656"
+      - "36657:26657"
+      - "1317:1317"
+      - "9090:9090"
+    entrypoint: ["/app/bootstrap.sh"]
+    healthcheck:
+      test: "wget -Sq --spider http://localhost:26657/status"
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+
+  connector:
+    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:v0.7.1
+    command:
+      - "kms-blockchain-connector"
+    environment:
+      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://kms-validator:9090
+      - ASC_CONN__CORE__ADDRESSES=http://kms-core:50051
+      - ASC_CONN__STORE__URL=http://gateway-store:8088
+      - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__INITIAL_WAIT_TIME=1
+      - ASC_CONN__CORE__TIMEOUT_CONFIG__DECRYPTION__RETRY_INTERVAL=1
+      - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__INITIAL_WAIT_TIME=1
+      - ASC_CONN__CORE__TIMEOUT_CONFIG__REENCRYPTION__RETRY_INTERVAL=1
+    depends_on:
+      kms-validator:
+        condition: service_healthy
+      kms-core:
+        condition: service_healthy
+
+  kms-core:
+    image: ghcr.io/zama-ai/kms-service-dev:v0.7.1
+    ports:
+      - "50051:50051"
+    healthcheck:
+      test: "grpc-health-probe --addr=localhost:50051"
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+
+  gateway:
+    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:v0.7.1
+    ports:
+      - "7077:7077"
+    command:
+      - "gateway"
+    volumes:
+      - ./default.toml:/app/gateway/config/default.toml:Z
+    environment:
+      - GATEWAY__ETHEREUM__LISTENER_TYPE=FHEVM_V1_1
+      - GATEWAY__ETHEREUM__WSS_URL=ws://nitro:8449
+      - GATEWAY__ETHEREUM__HTTP_URL=http://nitro:8449
+      - GATEWAY__ETHEREUM__FHE_LIB_ADDRESS=000000000000000000000000000000000000005d
+      - GATEWAY__ETHEREUM__ORACLE_PREDEPLOY_ADDRESS=
+      - GATEWAY__KMS__ADDRESS=http://kms-validator:9090
+      - GATEWAY__KMS__KEY_ID=408d8cbaa51dece7f782fe04ba0b1c1d017b1088
+      - GATEWAY__STORAGE__URL=http://gateway-store:8088
+      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://kms-validator:9090
+      - GATEWAY__ETHEREUM__RELAYER_KEY=
+      - RUST_BACKTRACE=1
+    depends_on:
+      kms-validator:
+        condition: service_healthy

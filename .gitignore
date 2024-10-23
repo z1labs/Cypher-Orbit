@@ -13,4 +13,5 @@ docker-compose/services/stats-db-data
 docker-compose/services/logs
 .DS_Store
 keys/*
+yarn.lock
 .env

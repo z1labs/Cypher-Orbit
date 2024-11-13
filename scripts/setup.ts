@@ -1,118 +1,121 @@
-import { ethers } from 'ethers'
-import { L3Config } from './l3ConfigType'
-import fs from 'fs'
-import { ethOrERC20Deposit } from './nativeTokenDeposit'
-import { createERC20Bridge } from './createTokenBridge'
-import { l3Configuration } from './l3Configuration'
-import { defaultRunTimeState, RuntimeState } from './runTimeState'
-import { transferOwner } from './transferOwnership'
+import { ethers } from 'ethers';
+import { L3Config } from './l3ConfigType';
+import fs from 'fs';
+import { ethOrERC20Deposit } from './nativeTokenDeposit';
+import { createERC20Bridge } from './createTokenBridge';
+import { l3Configuration } from './l3Configuration';
+import { defaultRunTimeState, RuntimeState } from './runTimeState';
+import { transferOwner } from './transferOwnership';
+
 // Delay function
 function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms))
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function checkRuntimeStateIntegrity(rs: RuntimeState) {
   if (!rs.chainId) {
-    rs.chainId = defaultRunTimeState.chainId
+    rs.chainId = defaultRunTimeState.chainId;
   }
   if (!rs.etherSent) {
-    rs.etherSent = defaultRunTimeState.etherSent
+    rs.etherSent = defaultRunTimeState.etherSent;
   }
   if (!rs.nativeTokenDeposit) {
-    rs.nativeTokenDeposit = defaultRunTimeState.nativeTokenDeposit
+    rs.nativeTokenDeposit = defaultRunTimeState.nativeTokenDeposit;
   }
   if (!rs.tokenBridgeDeployed) {
-    rs.tokenBridgeDeployed = defaultRunTimeState.tokenBridgeDeployed
+    rs.tokenBridgeDeployed = defaultRunTimeState.tokenBridgeDeployed;
   }
   if (!rs.l3config) {
-    rs.l3config = defaultRunTimeState.l3config
+    rs.l3config = defaultRunTimeState.l3config;
   }
   if (!rs.transferOwnership) {
-    rs.transferOwnership = defaultRunTimeState.transferOwnership
+    rs.transferOwnership = defaultRunTimeState.transferOwnership;
   }
 }
 
 async function main() {
   // Read the environment variables
-  const privateKey = process.env.PRIVATE_KEY
-  const L2_RPC_URL = process.env.L2_RPC_URL
-  const L3_RPC_URL = process.env.L3_RPC_URL
+  const privateKey = process.env.PRIVATE_KEY;
+  const L2_RPC_URL = process.env.L2_RPC_URL;
+  const L3_RPC_URL = process.env.L3_RPC_URL;
 
   if (!privateKey || !L2_RPC_URL || !L3_RPC_URL) {
-    throw new Error('Required environment variable not found')
+    throw new Error('Required environment variable not found');
   }
 
   // Read the JSON configuration
   const configRaw = fs.readFileSync(
     './config/orbitSetupScriptConfig.json',
     'utf-8'
-  )
-  const config: L3Config = JSON.parse(configRaw)
-  let rs: RuntimeState
+  );
+  const config: L3Config = JSON.parse(configRaw);
+  let rs: RuntimeState;
   if (fs.existsSync('./config/resumeState.json')) {
-    const stateRaw = fs.readFileSync('./config/resumeState.json', 'utf-8')
-    rs = JSON.parse(stateRaw)
-    //check integrity
-    checkRuntimeStateIntegrity(rs)
+    const stateRaw = fs.readFileSync('./config/resumeState.json', 'utf-8');
+    rs = JSON.parse(stateRaw);
+    // Check integrity
+    checkRuntimeStateIntegrity(rs);
 
-    //check if there is a new chain config
+    // Check if there is a new chain config
     if (rs.chainId !== config.chainId) {
-      rs = defaultRunTimeState
-      console.log('A different chain config than last time was detected.')
+      rs = defaultRunTimeState;
+      console.log('A different chain config than last time was detected.');
     } else {
       console.log(
         'resumeState file found, will restart from where it failed last time.'
-      )
+      );
     }
   } else {
-    rs = defaultRunTimeState
+    rs = defaultRunTimeState;
   }
 
-  rs.chainId = config.chainId
+  rs.chainId = config.chainId;
   // Generating providers from RPCs
-  const L2Provider = new ethers.providers.JsonRpcProvider(L2_RPC_URL)
-  const L3Provider = new ethers.providers.JsonRpcProvider(L3_RPC_URL)
+  const L2Provider = new ethers.JsonRpcProvider(L2_RPC_URL);
+  const L3Provider = new ethers.JsonRpcProvider(L3_RPC_URL);
 
   // Checking if the L2 network is the expected parent chain
-  if ((await L2Provider.getNetwork()).chainId !== config.parentChainId) {
+  const l2ChainId = (await L2Provider.getNetwork()).chainId;
+  if (l2ChainId !== BigInt(config.parentChainId)) {
     throw new Error(
       'The L2 RPC URL you have provided is not for the correct parent chain'
-    )
+    );
   }
 
   // Creating the signer
-  const signer = new ethers.Wallet(privateKey).connect(L2Provider)
+  const signer = new ethers.Wallet(privateKey, L2Provider);
 
   try {
     ////////////////////////////////////////////////
     /// Funding batch-poster and staker address ///
     //////////////////////////////////////////////
+    // Uncomment and update if needed
     // if (!rs.etherSent.batchPoster) {
-    //   console.log('Funding batch-poster accounts on parent chain with 0.3 ETH')
+    //   console.log('Funding batch-poster accounts on parent chain with 0.01 ETH');
     //   const tx1 = await signer.sendTransaction({
     //     to: config.batchPoster,
-    //     value: ethers.utils.parseEther('0.01'),
-    //   })
-    //   console.log(`Transaction hash on parent chain: ${tx1.hash}`)
-    //   const receipt1 = await tx1.wait()
+    //     value: ethers.parseEther('0.01'),
+    //   });
+    //   console.log(`Transaction hash on parent chain: ${tx1.hash}`);
+    //   const receipt1 = await tx1.wait();
     //   console.log(
     //     `Transaction was mined in block ${receipt1.blockNumber} on parent chain`
-    //   )
-    //   rs.etherSent.batchPoster = true
+    //   );
+    //   rs.etherSent.batchPoster = true;
     // }
 
     // if (!rs.etherSent.staker) {
-    //   console.log('Funding staker accounts on parent chain with 0.3 ETH')
+    //   console.log('Funding staker accounts on parent chain with 0.01 ETH');
     //   const tx2 = await signer.sendTransaction({
     //     to: config.staker,
-    //     value: ethers.utils.parseEther('0.01'),
-    //   })
-    //   console.log(`Transaction hash on parent chain: ${tx2.hash}`)
-    //   const receipt2 = await tx2.wait()
+    //     value: ethers.parseEther('0.01'),
+    //   });
+    //   console.log(`Transaction hash on parent chain: ${tx2.hash}`);
+    //   const receipt2 = await tx2.wait();
     //   console.log(
     //     `Transaction was mined in block ${receipt2.blockNumber} on parent chain`
-    //   )
-    //   rs.etherSent.staker = true
+    //   );
+    //   rs.etherSent.staker = true;
     // }
 
     if (!rs.nativeTokenDeposit) {
@@ -120,88 +123,89 @@ async function main() {
       /// ETH/Native token deposit to L3 /////////
       ////////////////////////////////////////////
       console.log(
-        'Running Orbit Chain Native token deposit to Deposit ETH or native ERC20 token from parent chain to your account on Orbit chain ... 💰💰💰💰💰💰'
-      )
-      const oldBalance = await L3Provider.getBalance(config.chainOwner)
+        'Running Orbit Chain Native token deposit to deposit ETH or native ERC20 token from parent chain to your account on Orbit chain... 💰💰💰'
+      );
+      const oldBalance = await L3Provider.getBalance(config.chainOwner);
       console.log(
-        'Old balance of your account on Orbit chain, before depositing native token: ',
+        'Old balance of your account on Orbit chain, before depositing native token:',
         oldBalance.toString()
-      )
+      );
 
-      await ethOrERC20Deposit(privateKey, L2_RPC_URL)
-      console.log('Native token deposited to your account on Orbit chain')
-      let depositCheckTime = 0
+      await ethOrERC20Deposit(privateKey, L2_RPC_URL);
+      console.log('Native token deposited to your account on Orbit chain');
+      let depositCheckTime = 0;
 
-      // Waiting for 30 secs to be sure that ETH/Native token deposited is received on L3
-      // Repeatedly check the balance until it changes by 0.4 native tokens
+      // Waiting for the deposit to be reflected on L3
       while (true) {
-        depositCheckTime++
-        const newBalance = await L3Provider.getBalance(config.chainOwner)
-        console.log(newBalance.toString())
-        console.log(oldBalance.toString())
-        console.log(newBalance.sub(oldBalance).toString())
-        console.log(ethers.utils.parseEther('0.01').toString())
-        if (newBalance.sub(oldBalance).gte(ethers.utils.parseEther('0.01'))) {
+        depositCheckTime++;
+        const newBalance = await L3Provider.getBalance(config.chainOwner);
+        console.log('New Balance:', newBalance.toString());
+        console.log('Old Balance:', oldBalance.toString());
+        console.log('Difference:', (newBalance - oldBalance).toString());
+        console.log('Expected Increase:', ethers.parseEther('0.01').toString());
+        if (newBalance - oldBalance >= ethers.parseEther('0.01')) {
           console.log(
             'Balance of your account on Orbit chain increased by the native token you have just sent.'
-          )
-          break
+          );
+          break;
         }
-        let tooLongNotification = ''
+        let tooLongNotification = '';
         if (depositCheckTime >= 6) {
           tooLongNotification =
-            "(It is taking a long time. Did you change the config files? If you did, you will need to delete ./config/My Arbitrum L3 Chain, since this chain data is for your last config file. If you didn't change the file, please ignore this message.)"
+            "(It is taking a long time. Did you change the config files? If you did, you will need to delete ./config/My Arbitrum L3 Chain, since this chain data is for your last config file. If you didn't change the file, please ignore this message.)";
         }
         console.log(
-          `Balance not changed yet. Waiting for another 30 seconds ⏰⏰⏰⏰⏰⏰ ${tooLongNotification}`
-        )
-        await delay(30 * 1000)
+          `Balance not changed yet. Waiting for another 30 seconds ⏰ ${tooLongNotification}`
+        );
+        await delay(30 * 1000);
       }
-      rs.nativeTokenDeposit = true
+      rs.nativeTokenDeposit = true;
     }
 
     if (!rs.tokenBridgeDeployed) {
       ////////////////////////////////
       /// Token Bridge Deployment ///
-      //////////////////////////////Waiting for retryables..
+      ////////////////////////////////
       console.log(
-        'Running tokenBridgeDeployment or erc20TokenBridge script to deploy token bridge contracts on parent chain and your Orbit chain 🌉🌉🌉🌉🌉'
-      )
-      await createERC20Bridge(L2_RPC_URL, privateKey, L3_RPC_URL, config.rollup)
-      rs.tokenBridgeDeployed = true
+        'Running tokenBridgeDeployment or erc20TokenBridge script to deploy token bridge contracts on parent chain and your Orbit chain 🌉'
+      );
+      await createERC20Bridge(L2_RPC_URL, privateKey, L3_RPC_URL, config.rollup);
+      rs.tokenBridgeDeployed = true;
     }
+
     ////////////////////////////////
     /// L3 Chain Configuration ///
-    //////////////////////////////
+    ////////////////////////////////
     if (!rs.l3config) {
       console.log(
-        'Running l3Configuration script to configure your Orbit chain 📝📝📝📝📝'
-      )
-      await l3Configuration(privateKey, L2_RPC_URL, L3_RPC_URL)
-      rs.l3config = true
+        'Running l3Configuration script to configure your Orbit chain 📝'
+      );
+      await l3Configuration(privateKey, L2_RPC_URL, L3_RPC_URL);
+      rs.l3config = true;
     }
+
     ////////////////////////////////
-    /// Transfering ownership /////
-    //////////////////////////////
+    /// Transferring ownership /////
+    ////////////////////////////////
     if (!rs.transferOwnership) {
       console.log(
-        'Transferring ownership on L3, from rollup owner to upgrade executor 🔃🔃🔃'
-      )
-      await transferOwner(privateKey, L2Provider, L3Provider)
-      rs.transferOwnership = true
+        'Transferring ownership on L3, from rollup owner to upgrade executor 🔃'
+      );
+      await transferOwner(privateKey, L2Provider, L3Provider);
+      rs.transferOwnership = true;
     }
   } catch (error) {
-    console.error('Error occurred:', error)
-    const runtimeString = JSON.stringify(rs)
-    fs.writeFileSync('./config/resumeState.json', runtimeString)
+    console.error('Error occurred:', error);
+    const runtimeString = JSON.stringify(rs);
+    fs.writeFileSync('./config/resumeState.json', runtimeString);
     console.log(
-      "Seems something went wrong during this process, but don't worry, we have recorded the deployed and initialized contracts into ./config/resumeState.json, next time you rerun the script, it will restart from where it failed "
-    )
+      "Seems something went wrong during this process, but don't worry, we have recorded the deployed and initialized contracts into ./config/resumeState.json. Next time you rerun the script, it will restart from where it failed."
+    );
   }
 }
 
 // Run the script
-main().catch(error => {
-  console.error(error)
-  process.exit(1)
-})
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
